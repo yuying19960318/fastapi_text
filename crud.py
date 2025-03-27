@@ -4,38 +4,50 @@ from  database import User,Role,Resource,Base,engine,AsyncSession,get_db
 from  schemas import UserCreate
 from fastapi import Depends
 from sqlalchemy.future import select
-from sqlalchemy.orm import joinedload
+from sqlalchemy.orm import selectinload
+from fastapi.security import OAuth2PasswordBearer
+from fastapi import Depends, Security
 
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 class UserCRUD:
     async def create_user(self,user:UserCreate,db:AsyncSession = Depends(get_db)):
+        # 获取角色对象
+        role_stmt = select(Role).where(Role.name.in_([r.value for r in user.role_name]))
+        role_result = await db.execute(role_stmt)
+        roles = role_result.scalars().all()
 
-        db_user=User(
+        # 验证角色是否存在
+        if len(roles) != len(user.role_name):
+            found_roles = {role.name for role in roles}
+            missing = [r.value for r in user.role_name if r.value not in found_roles]
+            raise ValueError(f"以下角色不存在: {missing}")
+
+        # 创建用户并关联角色
+        db_user = User(
             username=user.username,
             hashed_password=pwd_context.hash(user.password),
+            roles=roles  # 直接赋值角色对象列表
         )
-        db_user.roles=[]
+
         db.add(db_user)
         await db.commit()
 
-        stmt = select(User).options(joinedload(User.roles)).where(User.id == db_user.id)
-        result = await db.execute(stmt)
-        unique_result = result.unique()
-        db_user = unique_result.scalar_one()
+        # 关键修改：重新加载关联数据
+        await db.refresh(db_user, ["roles"])  # 显式刷新关联字段
 
-        # 新增的异步查询角色列表部分，通过角色ID去查询角色对象
-        role_ids = [role.id for role in db_user.roles]
-        if role_ids:  # 确保有角色ID才进行查询
-            role_stmt = select(Role).where(Role.id.in_(role_ids))
-            role_result = await db.execute(role_stmt)
-            roles = role_result.scalars().all()
-            db_user.roles = roles  # 将查询到的角色列表设置回用户对象的角色属性
+        # 更安全的加载方式
+        result = await db.execute(
+            select(User)
+            .options(selectinload(User.roles))  # 显式预加载
+            .where(User.id == db_user.id)
+        )
+        return result.scalar_one()
 
-        return db_user
+    @staticmethod  # 静态方法
+    async def authenticate_user( username:str,password:str,db:AsyncSession ):
 
-    async def authenticate_user(self, username:str,password:str,db:AsyncSession = Depends(get_db)):
         query = select(User).filter(User.username==username)
         result = await db.execute(query)
         user = result.scalars().first()
@@ -43,13 +55,19 @@ class UserCRUD:
             return None
         return user
 
-class MenuCRUD:
-    def get_menu(self,user:User):
-        seen = set()
-        result =[
-            {"menu_name":res.menu_name,"path":res.path}
-            for role in user.roles
-            for res in role.resources
-            if not (res.id in seen or seen.add(res.id))]
 
+class MenuCRUD:
+    async def get_all_menu(self, db: AsyncSession):  # 添加async关键字
+        """异步获取所有菜单"""
+        # 使用select查询代替query
+        stmt = select(Resource)
+        result = await db.execute(stmt)
+        resources = result.scalars().all()
+
+        seen = set()
+        return [
+            {"menu_name": res.menu_name, "path": res.path}
+            for res in resources
+            if not (res.id in seen or seen.add(res.id))
+        ]
 
