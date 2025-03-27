@@ -11,8 +11,8 @@ Base = declarative_base()
 user_role=Table(
     "user_role",
     Base.metadata,
-    Column("user_id",Integer,ForeignKey("user.id")),
-    Column("role_id",Integer,ForeignKey("role.id"))
+    Column("user_id",Integer),
+    Column("role_id",Integer)
 )
 
 role_resource=Table(
@@ -27,7 +27,14 @@ class User(Base):
     id=Column(Integer,primary_key=True,index=True)
     username=Column(String(50),unique=True,index=True)
     hashed_password=Column(String(200))
-    roles=relationship("Role",secondary="user_role",back_populates='users')
+    roles = relationship(
+        "Role",
+        secondary=user_role,
+        primaryjoin="User.id == user_role.c.user_id",
+        secondaryjoin="Role.id == user_role.c.role_id",
+        back_populates="users",
+        lazy="selectin"  # 添加加载策略
+    )
     create_at = Column(DateTime, default=datetime.now)
     update_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
     create_user = Column(String(50), nullable=True)
@@ -38,7 +45,14 @@ class Role(Base):
     id=Column(Integer,primary_key=True,index=True)
     name=Column(String(50),unique=True,index=True)
     description=Column(String(200))
-    users=relationship("User",secondary="user_role",back_populates="roles")
+    users = relationship(
+        "User",
+        secondary=user_role,
+        primaryjoin="Role.id == user_role.c.role_id",
+        secondaryjoin="User.id == user_role.c.user_id",
+        back_populates="roles",
+        lazy="selectin"  # 添加加载策略
+    )
     resources=relationship("Resource",secondary="role_resource",back_populates="roles")
     create_at = Column(DateTime, default=datetime.now)
     update_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
@@ -82,7 +96,14 @@ AsyncSessionLocal = sessionmaker(
 
 async def get_db():
     async with AsyncSessionLocal() as session:
-        yield session
+        try:
+            yield session
+            #await session.commit()
+        except Exception as e:
+            await session.rollback()
+            raise
+        finally:
+            await session.close()
 
 
 
