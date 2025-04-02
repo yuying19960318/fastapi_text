@@ -1,19 +1,22 @@
 from passlib.context import CryptContext
 from sqlalchemy.orm import Session
 from  database import User,Role,Resource,Base,engine,AsyncSession,get_db
-from  schemas import UserCreate
+from  schemas import UserCreate,UserResponse,UserFilter
 from fastapi import Depends
 from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload
 from fastapi.security import OAuth2PasswordBearer
 from fastapi import Depends, Security
+from sqlalchemy import select,and_
+
+
 
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 class UserCRUD:
-    async def create_user(self,user:UserCreate,db:AsyncSession = Depends(get_db)):
-        # 获取角色对象
+    async def create_user(self,user:UserCreate,db:AsyncSession = Depends(get_db)):        #用验证模型pydantic的UserCreate验证输入数据，存储到数据库db
+        # 获取角色对象（先看下数据库中是否存在相应角色）
         role_stmt = select(Role).where(Role.name.in_([r.value for r in user.role_name]))
         role_result = await db.execute(role_stmt)
         roles = role_result.scalars().all()
@@ -70,4 +73,21 @@ class MenuCRUD:
             for res in resources
             if not (res.id in seen or seen.add(res.id))
         ]
+class UserServer:
+
+    async def get_user(self, db:AsyncSession,filters:UserFilter,page:int,page_size:int):
+        query = select(User).options(selectinload(User.roles))
+
+        """username用户名查询，rose角色查询"""
+
+        if filters.username:
+            query = query.where(User.username==filters.username)
+        if filters.roles:
+            query = query.where(User.roles.any(Role.name.in_(filters.roles)))
+
+        query = query.offset((page-1)*page_size).limit(page_size)
+        result = await db.execute(query)
+        users = result.scalars().all()
+        return users
+
 
