@@ -25,10 +25,22 @@ class UserOut(BaseModel):
     class Config:
         from_attributes = True
 
+#获取用户信息模型——过滤器（填写信息可填可不填写）
+class UserFilter(BaseModel):
+    username: Optional[str] = None
+    roles: Optional[List[str]] = None
+
+#获取用户的相应的模型
+class UserResponse(BaseModel):
+    username: str
+    roles: List[str]
+
+
+
 #认证模型
-class Token(BaseModel):
-    access_token: str
-    token_type: str
+# class Token(BaseModel):
+#     access_token: str
+#     token_type: str
 
 #菜单模型
 class MenuItem(BaseModel):
